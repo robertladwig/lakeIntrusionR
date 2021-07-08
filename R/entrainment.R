@@ -3,39 +3,35 @@ library(tidyverse)
 # boundary conditions
 wtr_profile <- c(25,25,25,25,25,24,23,20,18,17,16,15,15,15,15,15,15)
 depth_profile <- seq(0,length(wtr_profile)-1,1)
+area_profile <- seq(from = 150000, to = 0, length.out = length(wtr_profile))
+volume_profile <- area_profile * mean(diff(depth_profile))
 
 calc_dens <- function(wtemp){
   dens = 999.842594 + (6.793952 * 10^-2 * wtemp) - (9.095290 * 10^-3 *wtemp^2) + (1.001685 * 10^-4 * wtemp^3) - (1.120083 * 10^-6* wtemp^4) + (6.536336 * 10^-9 * wtemp^5)
   return(dens)
 }
 
-plot(x = calc_dens(wtr_profile), y = depth_profile, ylim = rev(range(depth_profile)),
-     xlab = 'Density [kg/m3]', ylab = 'Depth from surface [m]')
-
 # inflow parameters
 cd <- 0.016
 slope <- 1.5
 angle <- 65
-Q_in <- 3
-wtr_in_0 <- 20
-
-lines(x = calc_dens(wtr_profile), y = rep(depth_profile[which.min((calc_dens(wtr_profile) - calc_dens(wtr_in_0))^2)], 
-                                          length(depth_profile)), lty = 'dashed', col = 'red')
+Q_in_0 <- 3
+wtr_in_0 <- 15
 
 # initial entrainment
 Ri_in <- (cd * (1 + 0.21 * sqrt(cd) * sin(angle))) / (sin(angle) * tan(slope))
 E_in <- 1.6 * (cd^(3/2)) / Ri_in
 
 # entrainment algorithm according to Antenucci (2005), Ayla (2014), Fischer (1979), Hipsey (2019)
-g_in = 9.81 * (calc_dens(wtr_in) - calc_dens(wtr_profile[1])) / calc_dens(wtr_profile[1])
-Q_in_0 = Q_in
+g_in = 9.81 * (calc_dens(wtr_in_0) - calc_dens(wtr_profile[1])) / calc_dens(wtr_profile[1])
 delta_z_in <- (2 * (Ri_in / g_in) * (Q_in_0 / tan(angle))^2)^(1/5)
 
 delta_z = rep(NA, 100)
 delta_z[1] <- delta_z_in
 delta_x = rep(NA, 100)
 delta_Q = rep(NA, 100)
-delta_Q[1] <- Q_in_0
+Q_in <- rep(NA, 100)
+Q_in[1] <- Q_in_0
 h <- rep(NA, 100)
 h[1] <- 0
 h <- max(depth_profile) - h
@@ -52,8 +48,18 @@ for (j in 2:100){
   delta_z[j] = 1.2 * E_in * delta_x[j] + delta_z[j-1]
   z[j] <- z[j-1] + delta_x[j] * sin(angle)
   
-  wtr_in[j] <- mean(c((wtr_in[j-1]), (wtr_profile[which.min(((max(depth_profile) - depth_profile )- 
-                                                                    (abs(z[j])))^2)])))
+  delta_Q[j] <- Q_in[j-1] * (abs(delta_z[j] / delta_z[j-1])^(5/3) - 1)
+  Q_in[j] <- Q_in[j-1] + delta_Q[j]
+
+  Mtotal <- Q_in[j] * calc_dens(wtr_in[j-1]) + 
+    delta_Q[j] * calc_dens((wtr_profile[which.min(((max(depth_profile) - depth_profile )- 
+                                                            (abs(z[j])))^2)])
+                             )
+  
+  wtr_in[j] <- (wtr_in[j-1] * Q_in[j] * calc_dens(wtr_in[j-1]) +
+                  delta_Q[j] * calc_dens((wtr_profile[which.min(((max(depth_profile) - depth_profile )-  (abs(z[j])))^2)])) * 
+                  (wtr_profile[which.min(((max(depth_profile) - depth_profile )- (abs(z[j])))^2)])) /
+    Mtotal
   
   if (calc_dens(wtr_in[j]) <= calc_dens(wtr_profile[which.min(((max(depth_profile) - depth_profile )- 
                                                             (abs(z[j])))^2)])){
@@ -61,10 +67,8 @@ for (j in 2:100){
   }
 }
 
-print(depth_profile[j])
-
-lines(x = calc_dens(wtr_profile), y = rep(depth_profile[j], 
-                                          length(depth_profile)), lty = 'dashed', col = 'green')
+print(depth_profile[which.min(((max(depth_profile) - depth_profile )- 
+                                 (abs(z[j])))^2)])
 
 # theoretical and experimental entrainment depth according to Wells & Nadarajah (2009)
 B = 9.81 * (calc_dens(wtr_in_0) - calc_dens(wtr_profile[1])) / calc_dens(wtr_profile[1]) * Q_in_0
@@ -93,7 +97,8 @@ ggplot(wtemp, aes(x = Density, y = Depth)) +
                linetype = 'Neutral buoyancy'),
              color = "green") + 
   geom_hline(aes(yintercept=
-               depth_profile[j], linetype = 'GLM algorithm'), 
+                   depth_profile[which.min(((max(depth_profile) - depth_profile )- 
+                                              (abs(z[j])))^2)], linetype = 'GLM algorithm'), 
              color = "red") + 
   geom_hline(aes(yintercept=
                Z_min,
